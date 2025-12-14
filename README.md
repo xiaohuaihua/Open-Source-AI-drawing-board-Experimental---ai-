@@ -66,4 +66,4 @@ No installation needed. No Node.js required.
 This project is licensed under the **MIT License**.
 
 ---
-*Created by Xiao Huai Hua- 2025*
+*Created by Junjun Huai- 2025*
