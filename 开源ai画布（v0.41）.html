@@ -1,0 +1,1332 @@
+<!-- 
+  Open Source AI Drawing Board v0.41 [Final]
+  Copyright (c) 2025 Junjun Huai
+  Licensed under the MIT License.
+  GitHub: https://github.com/xiaohuaihua/Open-Source-AI-drawing-board-Experimental---ai-
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open Source AI Drawing Board v0.41 [Final]</title>
+    <meta name="description" content="A lightweight, single-file AI node editor supporting multi-modal workflows (Text/Image-to-Image) with OpenAI & Gemini.">
+    
+    <!-- Core Libraries (MIT/Apache Licensed) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/idb-keyval@6/dist/umd.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        /* --- Base Styles --- */
+        body { overflow: hidden; background-color: #0f172a; font-family: 'Inter', sans-serif; }
+        .grid-pattern { background-image: radial-gradient(#334155 1px, transparent 1px); }
+        
+        /* --- Animations --- */
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        .slide-up-enter-active, .slide-up-leave-active { transition: transform 0.3s ease, opacity 0.3s ease; }
+        .slide-up-enter-from, .slide-up-leave-to { transform: translateY(20px); opacity: 0; }
+
+        @keyframes flow { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+        .edge-running { stroke-dasharray: 8, 4; animation: flow 0.5s linear infinite; stroke: #60a5fa; stroke-width: 3px; }
+        .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+        @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } }
+
+        /* --- UI Components --- */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        
+        .node-shadow { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3); }
+        .node-input { width: 100%; background-color: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; outline: none; resize: none; transition: border-color 0.2s; }
+        .node-input:focus { border-color: #3b82f6; }
+
+        .port { width: 12px; height: 12px; background-color: #94a3b8; border: 2px solid #334155; border-radius: 50%; position: absolute; top: 94px; transform: translate(-50%, -50%); cursor: crosshair; transition: transform 0.1s; z-index: 20; }
+        .port:hover { background-color: #3b82f6; border-color: white; transform: translate(-50%, -50%) scale(1.4); }
+        .port-input { left: 0px; }
+        .port-output { left: 100%; }
+
+        .will-change-transform { will-change: transform; }
+        .gallery-card.selected { border-color: #3b82f6; box-shadow: 0 0 0 2px #3b82f6; }
+        .gallery-card:hover .overlay { opacity: 1; }
+
+        /* --- Edge & Minimap Styles --- */
+        .edge-path { transition: stroke-width 0.1s, stroke 0.2s; }
+        .edge-path:hover { stroke-width: 4px; stroke: #60a5fa; }
+        .minimap-node { background-color: #475569; border-radius: 2px; }
+        .minimap-viewport { border: 2px solid #eab308; background-color: rgba(234, 179, 8, 0.1); box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body class="text-white selection:bg-blue-500 selection:text-white">
+
+    <div id="app" class="w-screen h-screen flex flex-col relative">
+        
+        <!-- Header -->
+        <header class="h-14 bg-slate-900/80 backdrop-blur-md border-b border-slate-700 flex items-center justify-between px-4 z-40 shadow-lg select-none">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg">
+                    <i class="fa-solid fa-diagram-project text-white text-sm"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg tracking-wide leading-tight">{{ t('header.title') }}</h1>
+                    <div class="text-[10px] text-slate-400 font-mono flex items-center gap-2">
+                        <span>v0.41 [Final]</span>
+                        <span class="w-[1px] h-3 bg-slate-600 block"></span>
+                        <span :class="{'text-yellow-400': isRunning, 'text-green-400': !isRunning && executionTime > 0}">
+                            <i class="fa-regular fa-clock"></i> {{ formattedTime }}
+                        </span>
+                        <span class="w-[1px] h-3 bg-slate-600 block"></span>
+                        <span v-if="isSaving" class="text-blue-400 animate-pulse"><i class="fa-solid fa-floppy-disk"></i> {{ t('header.saving') }}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <!-- GitHub Link -->
+                <a href="https://github.com/xiaohuaihua/Open-Source-AI-drawing-board-Experimental---ai-" target="_blank" class="text-slate-400 hover:text-white transition-colors mr-2 px-2" title="View on GitHub">
+                    <i class="fa-brands fa-github text-xl"></i>
+                </a>
+
+                <button @click="toggleLang" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-300 hover:text-white transition-colors flex items-center gap-2 border border-slate-700 mr-2">
+                    <i class="fa-solid fa-language"></i> {{ currentLang === 'zh' ? 'English' : '中文' }}
+                </button>
+
+                <div class="flex bg-slate-800 rounded-lg border border-slate-700 p-0.5 mr-2">
+                    <button @click="exportWorkflow" class="px-3 py-1.5 hover:bg-slate-700 rounded text-xs text-slate-300 hover:text-white transition-colors flex items-center gap-2">
+                        <i class="fa-solid fa-download"></i> {{ t('header.save') }}
+                    </button>
+                    <div class="w-[1px] bg-slate-700 my-1"></div>
+                    <button @click="triggerImport" class="px-3 py-1.5 hover:bg-slate-700 rounded text-xs text-slate-300 hover:text-white transition-colors flex items-center gap-2">
+                        <i class="fa-solid fa-upload"></i> {{ t('header.load') }}
+                    </button>
+                    <input type="file" ref="fileInput" class="hidden" accept=".json" @change="handleImport">
+                </div>
+
+                <button @click="openGallery" class="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-sm transition-colors border border-slate-600 text-slate-200">
+                    <i class="fa-solid fa-photo-film"></i> {{ t('header.gallery') }}
+                </button>
+
+                <button @click="openSettings" class="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-sm transition-colors border border-slate-600 text-slate-200">
+                    <i class="fa-solid fa-cog"></i> {{ t('header.settings') }}
+                </button>
+                
+                <div class="flex items-center">
+                    <button v-if="isRunning" @click="abortExecution" class="flex items-center gap-2 px-4 py-1.5 rounded text-sm font-bold transition-all shadow-lg shadow-red-900/40 bg-red-600 hover:bg-red-500 transform active:scale-95">
+                        <i class="fa-solid fa-stop"></i> {{ t('header.stop') }}
+                    </button>
+                    <button v-else @click="executeWorkflow" :disabled="isRunning" class="flex items-center gap-2 px-4 py-1.5 rounded text-sm font-bold transition-all shadow-lg shadow-blue-900/40 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95 bg-blue-600 hover:bg-blue-500">
+                        <i class="fa-solid fa-play"></i> {{ t('header.run') }}
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <div class="flex-1 flex overflow-hidden relative bg-slate-900">
+            <!-- Sidebar -->
+            <aside class="w-16 bg-slate-800/90 border-r border-slate-700 flex flex-col items-center py-4 gap-4 z-30 select-none shadow-xl backdrop-blur-sm">
+                <div class="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2">{{ t('sidebar.add') }}</div>
+                <button v-for="type in ['input', 'image-input', 'llm', 'image', 'output']" :key="type" 
+                    @click="addNode(type)" 
+                    class="w-10 h-10 rounded-xl bg-slate-700 hover:bg-blue-600 hover:text-white text-slate-400 transition-all flex items-center justify-center shadow-md border border-slate-600 hover:border-blue-400 group relative">
+                    <i :class="getNodeIcon(type)"></i>
+                    <span class="absolute left-12 bg-black text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 capitalize">{{ t('sidebar.' + type) }}</span>
+                </button>
+            </aside>
+
+            <!-- Canvas -->
+            <main 
+                ref="mainCanvas"
+                class="flex-1 relative overflow-hidden"
+                :class="{
+                    'cursor-grabbing select-none': interactionMode === 'pan' || interactionMode === 'node',
+                    'cursor-grab': !interactionMode
+                }"
+                @wheel.prevent="handleWheel"
+                @mousedown="handleMouseDown"
+                @mousemove="handleMouseMove"
+                @mouseup="handleMouseUp"
+                @mouseleave="handleMouseUp"
+            >
+                <div class="absolute inset-0 grid-pattern pointer-events-none opacity-20" :style="backgroundStyle"></div>
+                <div class="absolute inset-0 origin-top-left will-change-transform" :style="transformStyle">
+                    <!-- Edge Layer -->
+                    <svg class="absolute top-0 left-0 w-full h-full overflow-visible pointer-events-none z-0">
+                        <defs><marker id="arrowhead" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto"><polygon points="0 0, 12 4, 0 8" fill="#64748b" /></marker></defs>
+                        <!-- Hit Area Path -->
+                        <path v-for="edge in edges" :key="'hit-'+edge.id" :d="getEdgePath(edge)" stroke="transparent" stroke-width="15" fill="none" class="pointer-events-auto cursor-pointer" @contextmenu.prevent="deleteEdge(edge.id)" @mousedown.stop />
+                        <!-- Visible Path -->
+                        <path v-for="edge in edges" :key="edge.id" :d="getEdgePath(edge)" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrowhead)" 
+                            class="edge-path pointer-events-none"
+                            :class="{ 'edge-running': isRunning && isNodeRunning(edge.to) }" />
+                        <path v-if="tempEdge" :d="getTempEdgePath()" stroke="#3b82f6" stroke-width="2" stroke-dasharray="5,5" fill="none" marker-end="url(#arrowhead)" />
+                    </svg>
+
+                    <!-- Selection Box -->
+                    <div v-if="selectionBox.active" 
+                        class="absolute border border-blue-500 bg-blue-500/20 pointer-events-none z-50"
+                        :style="{
+                            left: selectionBox.x + 'px',
+                            top: selectionBox.y + 'px',
+                            width: selectionBox.width + 'px',
+                            height: selectionBox.height + 'px'
+                        }">
+                    </div>
+
+                    <!-- Node Layer -->
+                    <div v-for="node in nodes" :key="node.id" :id="'node-' + node.id"
+                        class="absolute w-72 bg-slate-800 rounded-lg node-shadow border flex flex-col transition-all z-10" 
+                        :class="[
+                            selectedNodeIds.has(node.id) ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-slate-600 hover:border-slate-500',
+                            node.data.status === 'error' ? 'border-red-500 shake' : '',
+                            node.data.status === 'running' ? 'border-yellow-500/80 shadow-[0_0_15px_rgba(234,179,8,0.3)]' : ''
+                        ]"
+                        :style="{ left: node.x + 'px', top: node.y + 'px' }" 
+                        @mousedown.stop="selectNode($event, node.id)"
+                    >
+                        <div class="port port-input" @mouseup="finishEdge(node)" title="Connect Input"></div>
+                        <div class="port port-output" @mousedown.stop="startWiring($event, node)" title="Drag Output"></div>
+                        
+                        <div class="h-9 bg-slate-700/50 backdrop-blur rounded-t-lg flex items-center justify-between px-3 cursor-move select-none border-b border-slate-600 group" @mousedown.stop="startNodeDrag($event, node)">
+                            <span class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                                <i v-if="node.data.status === 'running'" class="fa-solid fa-circle-notch fa-spin text-yellow-400"></i>
+                                <i v-else :class="[getNodeIcon(node.type), 'opacity-70 text-blue-300']"></i> 
+                                {{ t('sidebar.' + node.type) }}
+                            </span>
+                            <div class="flex items-center gap-2">
+                                <button v-if="['llm', 'image'].includes(node.type)" @click.stop="runSingleNode(node)" :disabled="isRunning || node.data.status === 'running'" class="text-slate-400 hover:text-green-400 transition-colors mr-1 w-5 h-5 flex items-center justify-center rounded hover:bg-slate-600" title="Run Single Node">
+                                    <i class="fa-solid fa-play text-[10px]"></i>
+                                </button>
+                                <span v-if="node.data.status === 'error'" class="text-[10px] text-red-400 font-bold bg-red-900/30 px-1 rounded">ERR</span>
+                                <button @click.stop="deleteNode(node.id)" class="text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity w-5 h-5 flex items-center justify-center rounded hover:bg-slate-600">
+                                    <i class="fa-solid fa-xmark"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="p-3 flex flex-col gap-2 min-h-[60px]">
+                            <!-- Input Node -->
+                            <div v-if="node.type === 'input'" class="flex flex-col h-full">
+                                <label class="text-[10px] uppercase font-bold text-slate-500 mb-1">{{ t('node.inputLabel') }}</label>
+                                <textarea v-model="node.data.value" class="node-input h-32 font-mono" :placeholder="t('node.placeholder')" @mousedown.stop></textarea>
+                            </div>
+
+                            <!-- Image Input Node -->
+                            <div v-if="node.type === 'image-input'" class="flex flex-col gap-3">
+                                <label class="text-[10px] uppercase font-bold text-slate-500 mb-1">{{ t('node.uploadLabel') }}</label>
+                                <div class="w-full relative group">
+                                    <div v-if="node.data.value && node.data.value.startsWith('db://')" class="relative w-full aspect-square bg-black rounded-lg border border-slate-600 overflow-hidden flex items-center justify-center">
+                                        <img :src="resolveImageUrl(node.data.value)" class="max-w-full max-h-full object-contain cursor-pointer" @click.stop="openLightbox(resolveImageUrl(node.data.value))" />
+                                        <button @click.stop="clearImageInput(node)" class="absolute top-2 right-2 bg-red-600/80 hover:bg-red-500 text-white p-1 rounded-md shadow-md opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <i class="fa-solid fa-trash text-xs"></i>
+                                        </button>
+                                    </div>
+                                    <label v-else class="w-full aspect-video border-2 border-dashed border-slate-600 hover:border-blue-500 hover:bg-slate-800/50 rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors">
+                                        <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-500 mb-2"></i>
+                                        <span class="text-xs text-slate-400">{{ t('node.clickUpload') }}</span>
+                                        <input type="file" accept="image/*" class="hidden" @change="handleImageUpload($event, node)" />
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- LLM Node -->
+                            <div v-if="node.type === 'llm'" class="flex flex-col gap-3">
+                                <div>
+                                    <label class="text-[10px] uppercase font-bold text-slate-500 mb-1">{{ t('node.modelLabel') }}</label>
+                                    <div class="relative">
+                                        <select v-model="node.data.selectedModel" class="node-input cursor-pointer appearance-none" @mousedown.stop>
+                                            <option value="" disabled>-- {{ t('node.modelLabel') }} --</option>
+                                            <option v-for="m in availableModels" :key="m.id" :value="m.value">{{ m.label }}</option>
+                                        </select>
+                                        <i class="fa-solid fa-chevron-down absolute right-3 top-2.5 text-xs text-slate-500 pointer-events-none"></i>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <div class="flex items-center justify-between">
+                                        <label class="text-[10px] uppercase font-bold text-slate-500">{{ t('node.promptLabel') }}</label>
+                                        <div class="relative">
+                                            <select v-model="node.data.promptMode" class="bg-slate-900 border border-slate-600 text-slate-400 text-[10px] rounded px-1 py-0.5 outline-none focus:border-blue-500 appearance-none pr-3 cursor-pointer" @mousedown.stop>
+                                                <option value="prepend">{{ t('node.modePrepend') }}</option>
+                                                <option value="append">{{ t('node.modeAppend') }}</option>
+                                                <option value="override">{{ t('node.modeOverride') }}</option>
+                                            </select>
+                                            <i class="fa-solid fa-chevron-down absolute right-1 top-1.5 text-[8px] text-slate-500 pointer-events-none"></i>
+                                        </div>
+                                    </div>
+                                    <textarea v-model="node.data.value" class="node-input h-20 font-mono text-xs" :placeholder="t('node.placeholderExtra')" @mousedown.stop></textarea>
+                                </div>
+                                
+                                <div class="flex flex-col gap-1">
+                                    <div class="flex items-center justify-between px-1">
+                                        <label class="text-[10px] uppercase font-bold text-slate-500">{{ t('node.generatedContent') }}</label>
+                                        <button @click.stop="node.data.isOutputLocked = !node.data.isOutputLocked" class="text-[10px] px-2 py-0.5 rounded transition-colors flex items-center gap-1" :class="node.data.isOutputLocked ? 'bg-slate-700 text-slate-400 hover:text-slate-200' : 'bg-yellow-900/30 text-yellow-400 hover:text-yellow-300'">
+                                            <i :class="node.data.isOutputLocked ? 'fa-solid fa-lock' : 'fa-solid fa-lock-open'"></i>
+                                            <span v-if="!node.data.isOutputLocked">EDIT</span>
+                                        </button>
+                                    </div>
+                                    <textarea v-if="node.data.history && node.data.history.length > 0 && node.data.historyIndex >= 0 && node.data.history[node.data.historyIndex]" v-model="node.data.history[node.data.historyIndex].content" class="node-input h-48 font-mono text-xs leading-relaxed" :class="[node.data.status === 'error' ? 'border-red-500 text-red-400' : '', !node.data.isOutputLocked ? 'border-yellow-600/50 focus:border-yellow-500' : 'text-slate-300']" :readonly="node.data.isOutputLocked" @mousedown.stop></textarea>
+                                    <div v-else class="node-input h-48 flex items-center justify-center text-slate-500 italic text-xs border-dashed">{{ t('node.waiting') }}</div>
+                                </div>
+                                <div class="flex items-center justify-between text-[10px] text-slate-500 font-mono px-1 select-none">
+                                    <button @click.stop="prevHistory(node)" :disabled="!canPrev(node)" class="hover:text-blue-400 disabled:opacity-30 transition-colors"><i class="fa-solid fa-chevron-left"></i></button>
+                                    <span>{{ node.data.history.length ? node.data.historyIndex + 1 : 0 }} / {{ node.data.history.length }}</span>
+                                    <button @click.stop="nextHistory(node)" :disabled="!canNext(node)" class="hover:text-blue-400 disabled:opacity-30 transition-colors"><i class="fa-solid fa-chevron-right"></i></button>
+                                </div>
+                            </div>
+                            
+                            <!-- Image Node -->
+                            <div v-if="node.type === 'image'" class="flex flex-col gap-3">
+                                <div>
+                                    <label class="text-[10px] uppercase font-bold text-slate-500 mb-1">{{ t('node.engineLabel') }}</label>
+                                    <div class="relative">
+                                        <select v-model="node.data.selectedModel" class="node-input cursor-pointer appearance-none" @mousedown.stop>
+                                            <option value="" disabled>-- {{ t('node.engineLabel') }} --</option>
+                                            <option v-for="m in availableModels" :key="m.id" :value="m.value">{{ m.label }}</option>
+                                        </select>
+                                        <i class="fa-solid fa-chevron-down absolute right-3 top-2.5 text-xs text-slate-500 pointer-events-none"></i>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <div class="flex items-center justify-between">
+                                        <label class="text-[10px] uppercase font-bold text-slate-500">{{ t('node.promptLabel') }}</label>
+                                        <div class="relative">
+                                            <select v-model="node.data.promptMode" class="bg-slate-900 border border-slate-600 text-slate-400 text-[10px] rounded px-1 py-0.5 outline-none focus:border-blue-500 appearance-none pr-3 cursor-pointer" @mousedown.stop>
+                                                <option value="prepend">{{ t('node.modePrepend') }}</option>
+                                                <option value="append">{{ t('node.modeAppend') }}</option>
+                                                <option value="override">{{ t('node.modeOverride') }}</option>
+                                            </select>
+                                            <i class="fa-solid fa-chevron-down absolute right-1 top-1.5 text-[8px] text-slate-500 pointer-events-none"></i>
+                                        </div>
+                                    </div>
+                                    <!-- Upstream Image Preview -->
+                                    <div v-if="getUpstreamImages(node).length > 0" class="flex gap-1.5 mb-1 overflow-x-auto py-1 px-0.5 bg-slate-900/50 rounded border border-slate-700/50" title="Reference Images">
+                                        <img v-for="img in getUpstreamImages(node)" :key="img" :src="resolveImageUrl(img)" class="w-8 h-8 rounded object-cover border border-slate-600 hover:border-blue-400" />
+                                    </div>
+                                    <textarea v-model="node.data.value" class="node-input h-20 font-mono text-xs" :placeholder="t('node.placeholderExtra')" @mousedown.stop></textarea>
+                                </div>
+
+                                <!-- Pro Settings (Aspect Ratio / Resolution) -->
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label class="text-[8px] uppercase font-bold text-slate-500 mb-0.5 block">Aspect Ratio</label>
+                                        <div class="relative">
+                                            <select v-model="node.data.aspectRatio" class="node-input cursor-pointer appearance-none text-[10px] py-1" @mousedown.stop>
+                                                <option value="1:1">1:1 (Square)</option>
+                                                <option value="16:9">16:9 (Landscape)</option>
+                                                <option value="9:16">9:16 (Portrait)</option>
+                                                <option value="4:3">4:3</option>
+                                                <option value="3:4">3:4</option>
+                                            </select>
+                                            <i class="fa-solid fa-chevron-down absolute right-2 top-2 text-[8px] text-slate-500 pointer-events-none"></i>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="text-[8px] uppercase font-bold text-slate-500 mb-0.5 block">Resolution</label>
+                                        <div class="relative">
+                                            <select v-model="node.data.resolution" class="node-input cursor-pointer appearance-none text-[10px] py-1" @mousedown.stop>
+                                                <option value="1024x1024">1024x1024</option>
+                                                <option value="2048x2048">2048x2048 (2K)</option>
+                                                <option value="4096x4096">4096x4096 (4K)</option>
+                                            </select>
+                                            <i class="fa-solid fa-chevron-down absolute right-2 top-2 text-[8px] text-slate-500 pointer-events-none"></i>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="w-full aspect-square bg-black border border-slate-700 rounded flex items-center justify-center overflow-hidden relative group">
+                                    <img v-if="getCurrentContent(node) && !getCurrentContent(node).startsWith('Error') && !getCurrentContent(node).startsWith('//')" 
+                                         :src="resolveImageUrl(getCurrentContent(node))" 
+                                         class="w-full h-full object-contain cursor-zoom-in transition-transform group-hover:scale-105" 
+                                         @click.stop="openLightbox(resolveImageUrl(getCurrentContent(node)))" />
+                                    <div v-else-if="getCurrentContent(node) && getCurrentContent(node).startsWith('Error')" class="text-red-400 text-xs text-center px-2">{{ getCurrentContent(node) }}</div>
+                                    <div v-else class="text-slate-600 text-xs text-center flex flex-col items-center">
+                                        <i class="fa-solid fa-image text-3xl mb-2 opacity-50"></i>
+                                        <span>{{ t('node.preview') }}</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between text-[10px] text-slate-500 font-mono px-1 select-none">
+                                    <button @click.stop="prevHistory(node)" :disabled="!canPrev(node)" class="hover:text-blue-400 disabled:opacity-30 transition-colors"><i class="fa-solid fa-chevron-left"></i></button>
+                                    <span>{{ node.data.history.length ? node.data.historyIndex + 1 : 0 }} / {{ node.data.history.length }}</span>
+                                    <button @click.stop="nextHistory(node)" :disabled="!canNext(node)" class="hover:text-blue-400 disabled:opacity-30 transition-colors"><i class="fa-solid fa-chevron-right"></i></button>
+                                </div>
+                            </div>
+                            
+                            <!-- Output Node -->
+                            <div v-if="node.type === 'output'" class="flex flex-col h-full">
+                                <label class="text-[10px] uppercase font-bold text-slate-500 mb-1">{{ t('node.resultLabel') }}</label>
+                                <div class="node-input h-40 bg-black border-dashed border-slate-700 overflow-y-auto whitespace-pre-wrap text-green-400 font-mono text-xs flex items-center justify-center">
+                                    <div v-if="isImageUrl(getCurrentContent(node))" class="w-full h-full">
+                                        <img :src="resolveImageUrl(getCurrentContent(node))" 
+                                             class="w-full h-full object-contain cursor-zoom-in" 
+                                             @click.stop="openLightbox(resolveImageUrl(getCurrentContent(node)))" />
+                                    </div>
+                                    <span v-else class="w-full h-full text-left p-1">{{ getCurrentContent(node) || t('node.waiting') }}</span>
+                                </div>
+                                <div class="flex items-center justify-between text-[10px] text-slate-500 font-mono px-1 select-none mt-1">
+                                    <button @click.stop="prevHistory(node)" :disabled="!canPrev(node)" class="hover:text-blue-400 disabled:opacity-30 transition-colors"><i class="fa-solid fa-chevron-left"></i></button>
+                                    <span>{{ node.data.history.length ? node.data.historyIndex + 1 : 0 }} / {{ node.data.history.length }}</span>
+                                    <button @click.stop="nextHistory(node)" :disabled="!canNext(node)" class="hover:text-blue-400 disabled:opacity-30 transition-colors"><i class="fa-solid fa-chevron-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Minimap -->
+                <div v-if="minimapGeometry && nodes.length > 0" 
+                     class="absolute bottom-14 right-4 bg-slate-800/90 border border-slate-700 shadow-xl rounded-lg overflow-hidden z-30 cursor-crosshair"
+                     :style="{ width: minimapGeometry.mapW + 'px', height: minimapGeometry.mapH + 'px' }"
+                     @mousedown.stop="handleMinimapClick">
+                    <div class="relative w-full h-full">
+                        <div v-for="mn in minimapGeometry.miniNodes" :key="'mini-'+mn.id" class="absolute minimap-node" :style="{ left: mn.left + 'px', top: mn.top + 'px', width: mn.width + 'px', height: mn.height + 'px' }"></div>
+                        <div class="absolute minimap-viewport" :style="{ left: minimapGeometry.viewport.left + 'px', top: minimapGeometry.viewport.top + 'px', width: minimapGeometry.viewport.width + 'px', height: minimapGeometry.viewport.height + 'px' }"></div>
+                    </div>
+                </div>
+
+                <!-- Status Bar -->
+                <div class="absolute bottom-4 right-4 bg-slate-800/80 backdrop-blur px-3 py-1.5 rounded-full border border-slate-700 text-xs text-slate-400 font-mono pointer-events-none shadow-lg flex gap-3 z-30 items-center">
+                    <span v-if="selectedNodeIds.size > 0" class="text-blue-400 font-bold mr-2">Selected: {{ selectedNodeIds.size }}</span>
+                    <span class="mr-2">Nodes: {{ nodes.length }}</span>
+                    <span class="mr-2">Edges: {{ edges.length }}</span>
+                    <span>Zoom: {{ Math.round(transform.k * 100) }}%</span>
+                    <button @click="resetView" class="pointer-events-auto hover:text-white transition-colors ml-3 text-slate-300 flex items-center justify-center" title="Reset View">
+                        <i class="fa-solid fa-crosshairs"></i>
+                    </button>
+                </div>
+            </main>
+        </div>
+
+        <!-- Settings/Gallery/Lightbox Modals (Same as previous) -->
+        <transition name="fade">
+            <div v-if="isSettingsOpen" class="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" @click.self="closeSettings">
+                <div class="bg-slate-800 border border-slate-600 w-[800px] h-[550px] rounded-xl shadow-2xl flex flex-col overflow-hidden animate-up">
+                    <div class="h-16 border-b border-slate-700 flex items-center justify-between px-6 bg-slate-800">
+                        <div><h2 class="font-bold text-xl text-white">{{ t('settings.title') }}</h2><p class="text-xs text-slate-400 mt-0.5">{{ t('settings.subtitle') }}</p></div>
+                        <button @click="closeSettings" class="text-slate-400 hover:text-white transition-colors bg-slate-700 hover:bg-slate-600 w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <div class="flex-1 flex overflow-hidden">
+                        <div class="w-1/3 border-r border-slate-700 bg-slate-900/50 flex flex-col">
+                            <div class="p-4 border-b border-slate-700"><button @click="createNewSource" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold transition-all shadow-lg shadow-blue-900/30 flex items-center justify-center gap-2"><i class="fa-solid fa-plus"></i> {{ t('settings.addProvider') }}</button></div>
+                            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                                <div v-for="source in apiSources" :key="source.id" @click="selectSource(source)" class="px-4 py-3 rounded-lg cursor-pointer border transition-all text-sm group relative" :class="currentForm.id === source.id ? 'bg-blue-600/10 border-blue-500 text-white' : 'border-transparent bg-slate-800 hover:bg-slate-700 text-slate-300'">
+                                    <div class="font-bold mb-0.5 flex items-center gap-2"><span>{{ source.name || 'Unnamed Provider' }}</span><span v-if="source.type === 'gemini'" class="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px]">GE</span><span v-else class="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px]">OA</span></div>
+                                    <div class="text-[10px] text-slate-500 font-mono truncate">{{ source.baseUrl || 'No URL set' }}</div>
+                                    <i v-if="currentForm.id === source.id" class="fa-solid fa-chevron-right absolute right-3 top-1/2 -translate-y-1/2 text-blue-500 text-xs"></i>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="w-2/3 p-8 bg-slate-800 overflow-y-auto">
+                            <div v-if="currentForm.id" class="space-y-6">
+                                <div><label class="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-wider">{{ t('settings.providerName') }}</label><input v-model="currentForm.name" type="text" placeholder="e.g., OpenAI, DeepSeek" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-sm focus:border-blue-500 outline-none text-white placeholder-slate-600 transition-colors"></div>
+                                <div><label class="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-wider">{{ t('settings.providerType') }}</label><div class="relative"><select v-model="currentForm.type" @change="handleTypeChange" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-sm appearance-none focus:border-blue-500 outline-none text-white transition-colors cursor-pointer"><option value="openai">OpenAI Compatible (Default)</option><option value="gemini">Google Gemini (Official)</option></select><i class="fa-solid fa-chevron-down absolute right-3 top-3 text-xs text-slate-500 pointer-events-none"></i></div></div>
+                                <div><label class="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-wider">{{ t('settings.baseUrl') }}</label><input v-model="currentForm.baseUrl" type="text" placeholder="https://api.openai.com/v1" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-sm font-mono focus:border-blue-500 outline-none text-white placeholder-slate-600 transition-colors"></div>
+                                <div><label class="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-wider">{{ t('settings.apiKey') }}</label><input v-model="currentForm.apiKey" type="password" placeholder="sk-..." class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-sm font-mono focus:border-blue-500 outline-none text-white placeholder-slate-600 transition-colors"></div>
+                                <div><label class="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-wider">{{ t('settings.models') }}</label><textarea v-model="currentForm.models" rows="4" placeholder="gpt-4, gpt-3.5-turbo, dall-e-3" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-sm font-mono focus:border-blue-500 outline-none text-white placeholder-slate-600 transition-colors"></textarea></div>
+                                <div class="pt-6 border-t border-slate-700 flex justify-between items-center"><button @click="deleteCurrentSource" class="text-red-400 hover:text-red-300 text-sm flex items-center gap-2 hover:bg-red-900/20 px-3 py-1.5 rounded transition-colors"><i class="fa-solid fa-trash"></i> {{ t('settings.delete') }}</button><button @click="saveCurrentSource" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold shadow-lg transition-transform active:scale-95 flex items-center gap-2"><i class="fa-solid fa-check"></i> {{ t('settings.save') }}</button></div>
+                            </div>
+                            <div v-else class="h-full flex flex-col items-center justify-center text-slate-600"><i class="fa-solid fa-server text-4xl mb-4 opacity-30"></i><p class="text-sm">{{ t('settings.noSource') }}</p></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <transition name="fade">
+            <div v-if="isGalleryOpen" class="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm" @click.self="closeGallery">
+                <div class="w-full h-full flex flex-col overflow-hidden">
+                    <div class="h-16 border-b border-slate-700 flex items-center justify-between px-6 bg-slate-800/50 backdrop-blur shrink-0">
+                        <div class="flex items-center gap-4"><h2 class="font-bold text-xl text-white flex items-center gap-2"><i class="fa-solid fa-photo-film text-blue-400"></i> {{ t('gallery.title') }}</h2><span class="text-slate-400 text-xs bg-slate-700 px-2 py-0.5 rounded-full">{{ galleryItems.length }} Images</span></div>
+                        <button @click="closeGallery" class="text-slate-400 hover:text-white transition-colors bg-slate-700 hover:bg-slate-600 w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-8">
+                        <div v-if="galleryItems.length === 0" class="h-full flex flex-col items-center justify-center text-slate-600"><i class="fa-regular fa-image text-6xl mb-4 opacity-20"></i><p class="text-lg">{{ t('gallery.empty') }}</p><p class="text-sm mt-2 opacity-60">{{ t('gallery.emptyHint') }}</p></div>
+                        <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                            <div v-for="item in galleryItems" :key="item.uuid" class="gallery-card aspect-square bg-slate-800 rounded-lg border-2 border-transparent relative group overflow-hidden cursor-pointer transition-all hover:border-slate-500" :class="{ 'selected': selectedImageUuids.has(item.uuid) }" @click="toggleImageSelection(item.uuid)">
+                                <img :src="item.src" class="w-full h-full object-cover" loading="lazy">
+                                <div class="overlay absolute inset-0 bg-black/40 opacity-0 transition-opacity flex items-center justify-center" :class="{ 'opacity-100': selectedImageUuids.has(item.uuid) }"><div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white transform scale-0 transition-transform" :class="{ 'scale-100': selectedImageUuids.has(item.uuid) }"><i class="fa-solid fa-check"></i></div></div>
+                                <div class="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent text-[10px] text-slate-300 font-mono opacity-0 group-hover:opacity-100 transition-opacity">{{ formatDate(item.timestamp) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="h-16 border-t border-slate-700 bg-slate-800/80 backdrop-blur px-8 flex items-center justify-between shrink-0">
+                        <div class="text-sm text-slate-300 font-bold">{{ t('gallery.selected') }} <span class="text-blue-400">{{ selectedImageUuids.size }}</span> / {{ galleryItems.length }}</div>
+                        <div class="flex items-center gap-3">
+                            <button @click="toggleSelectAll" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm text-white font-medium transition-colors">{{ selectedImageUuids.size === galleryItems.length && galleryItems.length > 0 ? t('gallery.deselectAll') : t('gallery.selectAll') }}</button>
+                            <button @click="deleteSelected" :disabled="selectedImageUuids.size === 0" class="px-4 py-2 bg-red-900/50 hover:bg-red-900/80 text-red-200 border border-red-900 rounded text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"><i class="fa-solid fa-trash"></i> {{ t('gallery.delete') }}</button>
+                            <button @click="downloadSelected" :disabled="selectedImageUuids.size === 0 || isDownloading" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white font-bold shadow-lg transition-transform active:scale-95 flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"><i v-if="isDownloading" class="fa-solid fa-circle-notch fa-spin"></i><i v-else class="fa-solid fa-download"></i> {{ isDownloading ? 'Zipping...' : t('gallery.download') }}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <transition name="fade">
+            <div v-if="lightboxUrl" class="absolute inset-0 z-[60] bg-black/95 flex items-center justify-center p-10 cursor-zoom-out" @click="lightboxUrl = null">
+                <img :src="resolveImageUrl(lightboxUrl)" class="max-w-full max-h-full rounded shadow-2xl shadow-blue-500/20" @click.stop />
+                <button class="absolute top-6 right-6 text-white/50 hover:text-white text-3xl transition-colors"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </transition>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, reactive } = Vue;
+
+        // --- I18N Data ---
+        const translations = {
+            en: {
+                header: { title: "Open Source AI Drawing Board", saving: "Saving...", save: "Save JSON", load: "Load JSON", gallery: "Gallery", settings: "Settings", run: "Run Workflow", stop: "Stop" },
+                sidebar: { add: "ADD", input: "Input Node", "image-input": "Image Upload", llm: "LLM Node", image: "Image Node", output: "Output Node" },
+                node: { 
+                    inputLabel: "System / User Prompt", 
+                    modelLabel: "Model Selection", 
+                    promptLabel: "Additional Prompt",
+                    uploadLabel: "Upload Image",
+                    clickUpload: "Click to upload image",
+                    generatedContent: "Generated Content",
+                    engineLabel: "Generation Engine", 
+                    resultLabel: "Final Result",
+                    placeholder: "Enter text here...",
+                    placeholderExtra: "Add extra instructions...",
+                    waiting: "// Waiting for data...",
+                    preview: "Image Preview",
+                    modePrepend: "Insert Before Input",
+                    modeAppend: "Insert After Input",
+                    modeOverride: "Override Input"
+                },
+                settings: {
+                    title: "API Settings",
+                    subtitle: "Manage your AI provider keys and endpoints",
+                    addProvider: "Add Provider",
+                    providerName: "PROVIDER NAME",
+                    providerType: "PROVIDER TYPE",
+                    baseUrl: "BASE URL",
+                    apiKey: "API KEY",
+                    models: "SUPPORTED MODELS",
+                    delete: "Delete",
+                    save: "Save Changes",
+                    noSource: "Select a provider from the left"
+                },
+                gallery: {
+                    title: "Local Gallery",
+                    empty: "No generated images found.",
+                    emptyHint: "Run an Image Generation node to save images here.",
+                    selected: "Selected:",
+                    selectAll: "Select All",
+                    deselectAll: "Deselect All",
+                    delete: "Delete Selected",
+                    download: "Download Selected"
+                }
+            },
+            zh: {
+                header: { title: "开源 AI 画布", saving: "保存中...", save: "保存 JSON", load: "载入 JSON", gallery: "图库", settings: "设置", run: "运行工作流", stop: "停止运行" },
+                sidebar: { add: "添加节点", input: "输入节点", "image-input": "上传图片", llm: "大模型节点", image: "生图节点", output: "输出节点" },
+                node: { 
+                    inputLabel: "系统/用户提示词", 
+                    modelLabel: "模型选择", 
+                    promptLabel: "补充提示词", 
+                    uploadLabel: "上传图片", 
+                    clickUpload: "点击上传图片",
+                    generatedContent: "生成内容",
+                    engineLabel: "生图引擎", 
+                    resultLabel: "最终结果",
+                    placeholder: "在此输入文本...",
+                    placeholderExtra: "添加额外指令...",
+                    waiting: "// 等待数据中...",
+                    preview: "图片预览",
+                    modePrepend: "插入到输入前",
+                    modeAppend: "追加到输入后",
+                    modeOverride: "覆盖原输入"
+                },
+                settings: {
+                    title: "API 设置",
+                    subtitle: "管理您的 AI 服务商密钥和接口地址",
+                    addProvider: "添加服务商",
+                    providerName: "服务商名称",
+                    providerType: "服务商类型",
+                    baseUrl: "接口地址 (Base URL)",
+                    apiKey: "API 密钥",
+                    models: "支持的模型 (用逗号分隔)",
+                    delete: "删除",
+                    save: "保存更改",
+                    noSource: "请从左侧选择一个服务商"
+                },
+                gallery: {
+                    title: "本地图库",
+                    empty: "暂无生成的图片。",
+                    emptyHint: "运行生图节点后，图片将保存在这里。",
+                    selected: "已选:",
+                    selectAll: "全选",
+                    deselectAll: "取消全选",
+                    delete: "删除选中",
+                    download: "下载选中"
+                }
+            }
+        };
+
+        createApp({
+            setup() {
+                // --- Core State ---
+                const transform = ref({ x: 0, y: 0, k: 1 });
+                const nodes = ref([]);
+                const edges = ref([]);
+                const apiSources = ref([]);
+                const isRunning = ref(false);
+                const isSaving = ref(false);
+                const executionTime = ref(0);
+                
+                // v0.40 State
+                const selectedNodeIds = ref(new Set()); 
+                const selectionBox = reactive({ active: false, x: 0, y: 0, width: 0, height: 0, startX: 0, startY: 0 });
+                const clipboardData = ref(null);
+
+                const lightboxUrl = ref(null);
+                const mainCanvas = ref(null);
+                
+                // --- I18n Logic ---
+                const currentLang = ref(localStorage.getItem('ai_workflow_lang') || 'zh');
+                const t = (path) => {
+                    return path.split('.').reduce((o, i) => (o ? o[i] : null), translations[currentLang.value]) || path;
+                };
+                const toggleLang = () => {
+                    currentLang.value = currentLang.value === 'zh' ? 'en' : 'zh';
+                    localStorage.setItem('ai_workflow_lang', currentLang.value);
+                };
+
+                // Interaction
+                const lastMousePos = ref({ x: 0, y: 0 });
+                const interactionMode = ref(null);
+                const draggingNode = ref(null);
+                const tempEdge = ref(null);
+                
+                // Form & Settings
+                const isSettingsOpen = ref(false);
+                const currentForm = ref({});
+                const fileInput = ref(null);
+                let timerInterval = null;
+                let controller = null;
+
+                // --- Gallery State ---
+                const isGalleryOpen = ref(false);
+                const selectedImageUuids = ref(new Set());
+                const isDownloading = ref(false);
+
+                // --- Storage & Image Resolving ---
+                const imageBlobUrls = reactive({});
+                const generateUUID = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString() + Math.random().toString().slice(2);
+
+                const saveBlobToDB = async (blob) => {
+                    if (!window.idbKeyval) { console.error('idb-keyval not loaded'); return null; }
+                    const uuid = generateUUID();
+                    await idbKeyval.set(uuid, blob);
+                    return uuid;
+                };
+
+                const loadBlobFromDB = async (uuid) => {
+                    if (!window.idbKeyval) return null;
+                    return await idbKeyval.get(uuid);
+                };
+
+                const resolveImageUrl = (content) => {
+                    if (!content || typeof content !== 'string') return '';
+                    if (content.startsWith('http') || content.startsWith('data:')) return content;
+                    
+                    if (content.startsWith('db://')) {
+                        const uuid = content.replace('db://', '');
+                        if (imageBlobUrls[uuid]) return imageBlobUrls[uuid];
+                        if (imageBlobUrls[uuid] === undefined) {
+                            imageBlobUrls[uuid] = ''; 
+                            loadBlobFromDB(uuid).then(blob => {
+                                if (blob) {
+                                    imageBlobUrls[uuid] = URL.createObjectURL(blob);
+                                } else {
+                                    console.warn(`Blob ${uuid} not found`);
+                                    imageBlobUrls[uuid] = 'https://via.placeholder.com/150?text=Missing+File';
+                                }
+                            }).catch(e => console.error("DB Load Error", e));
+                        }
+                        return imageBlobUrls[uuid]; 
+                    }
+                    return content; 
+                };
+
+                // --- v0.41 Step 3 Helper: Blob to Base64 ---
+                const blobToBase64 = (blob) => {
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            // Extract Base64 data from Data URL (e.g. "data:image/png;base64,.....")
+                            const base64String = reader.result.split(',')[1];
+                            resolve(base64String);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(blob);
+                    });
+                };
+
+                const handleImageUpload = async (event, node) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    try {
+                        const uuid = await saveBlobToDB(file);
+                        const dbUrl = `db://${uuid}`;
+                        node.data.value = dbUrl;
+                        node.data.output = dbUrl;
+                        imageBlobUrls[uuid] = URL.createObjectURL(file);
+                    } catch (e) {
+                        console.error("Image Upload Failed", e);
+                        alert("Failed to upload image.");
+                    }
+                };
+
+                const clearImageInput = (node) => {
+                    node.data.value = '';
+                    node.data.output = '';
+                };
+
+                const base64ToBlob = (base64, mimeType) => {
+                    const byteCharacters = atob(base64);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    return new Blob([byteArray], { type: mimeType });
+                };
+
+                const parseImageResponse = async (json) => {
+                    if (!json) throw new Error("Empty response");
+                    if (json.data && json.data[0] && json.data[0].b64_json) {
+                        const blob = base64ToBlob(json.data[0].b64_json, 'image/png');
+                        const uuid = await saveBlobToDB(blob);
+                        imageBlobUrls[uuid] = URL.createObjectURL(blob);
+                        return `db://${uuid}`;
+                    }
+                    if (json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) {
+                        for (const part of json.candidates[0].content.parts) {
+                            if (part.inlineData && part.inlineData.data) {
+                                const mime = part.inlineData.mimeType || 'image/png';
+                                const blob = base64ToBlob(part.inlineData.data, mime);
+                                const uuid = await saveBlobToDB(blob);
+                                imageBlobUrls[uuid] = URL.createObjectURL(blob);
+                                return `db://${uuid}`;
+                            }
+                        }
+                        if (json.candidates[0].content.parts[0].text) throw new Error("Gemini Refusal: " + json.candidates[0].content.parts[0].text);
+                    }
+                    if (json.predictions && json.predictions[0] && json.predictions[0].bytesBase64Encoded) {
+                        const blob = base64ToBlob(json.predictions[0].bytesBase64Encoded, 'image/png');
+                        const uuid = await saveBlobToDB(blob);
+                        imageBlobUrls[uuid] = URL.createObjectURL(blob);
+                        return `db://${uuid}`;
+                    }
+                    if (json.data && json.data[0] && json.data[0].url) {
+                        try {
+                            const imgRes = await fetch(json.data[0].url);
+                            const blob = await imgRes.blob();
+                            const uuid = await saveBlobToDB(blob);
+                            imageBlobUrls[uuid] = URL.createObjectURL(blob);
+                            return `db://${uuid}`;
+                        } catch (e) {
+                            console.warn("Failed to download URL, returning link", e);
+                            return json.data[0].url;
+                        }
+                    }
+                    throw new Error("Unknown Image Response Format: " + JSON.stringify(json).substring(0, 100) + "...");
+                };
+
+                const constructGeminiUrl = (baseUrl, model, apiKey) => {
+                    let url = baseUrl.trim().replace(/\/+$/, '');
+                    if (url.endsWith(':generateContent') || url.endsWith(':predict')) {
+                        const regex = /(.*\/models\/)([^:\/]+)(:(generateContent|predict).*)/;
+                        const match = url.match(regex);
+                        if (match) url = `${match[1]}${model}${match[3]}`;
+                        const sep = url.includes('?') ? '&' : '?';
+                        return `${url}${sep}key=${apiKey}`;
+                    }
+                    if (url.includes('generativelanguage.googleapis.com') || url.endsWith('/google')) {
+                        return `${url}/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                    }
+                    return `${url}/models/${model}:generateContent?key=${apiKey}`;
+                };
+
+                // --- v0.41 Final: Handle Image Generation with Pro Settings ---
+                const handleImageGeneration = async (node, inputData, source, modelName, signal) => {
+                    const promptText = inputData.text || '';
+                    const imageUuids = inputData.images || [];
+                    const aspectRatio = node.data.aspectRatio || "1:1";
+                    
+                    // Map resolution string to API expected format
+                    let imageSize = undefined;
+                    if (node.data.resolution === '2048x2048') imageSize = '2K';
+                    else if (node.data.resolution === '4096x4096') imageSize = '4K';
+                    // Default '1024x1024' usually implies standard or '1K' or no param, letting model decide.
+                    
+                    let jsonResponse = null;
+                    if (source.type === 'gemini') {
+                        let url = '';
+                        let body = {};
+                        
+                        if (modelName.startsWith('imagen-') && !modelName.includes('gemini')) {
+                            // Legacy Imagen - Text Only
+                            let baseUrl = source.baseUrl.replace(/\/+$/, '');
+                            if (!baseUrl) baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+                            url = `${baseUrl}/models/${modelName}:predict?key=${source.apiKey}`;
+                            // Legacy Imagen might not support the new config structure perfectly here,
+                            // sticking to basic implementation for legacy.
+                            body = { instances: [{ prompt: promptText }], parameters: { sampleCount: 1, aspectRatio: aspectRatio } };
+                        } else {
+                            // Modern Gemini (2.0/3.0) - Multi-modal
+                            url = constructGeminiUrl(source.baseUrl, modelName, source.apiKey);
+                            
+                            // Construct Parts
+                            const parts = [];
+                            if (promptText) parts.push({ text: promptText });
+                            
+                            // Process Images
+                            if (imageUuids.length > 0) {
+                                for (const uuid of imageUuids) {
+                                    // Extract clean UUID
+                                    const cleanId = uuid.startsWith('db://') ? uuid.replace('db://', '') : uuid;
+                                    const blob = await loadBlobFromDB(cleanId);
+                                    if (blob) {
+                                        const b64 = await blobToBase64(blob);
+                                        parts.push({
+                                            inlineData: {
+                                                mimeType: blob.type || 'image/png',
+                                                data: b64
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+
+                            // v0.41 Final: Construct Config
+                            const imageConfig = { aspectRatio: aspectRatio };
+                            if (imageSize) imageConfig.imageSize = imageSize;
+
+                            body = { 
+                                contents: [{ parts: parts }], 
+                                generationConfig: { 
+                                    responseModalities: ["IMAGE"] 
+                                },
+                                // Inject config at root level for Gemini API
+                                config: {
+                                    imageConfig: imageConfig
+                                }
+                            };
+                        }
+                        
+                        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+                        if (!res.ok) { const errText = await res.text(); throw new Error(`Gemini API Error ${res.status}: ${errText}`); }
+                        jsonResponse = await res.json();
+                    } else {
+                        // OpenAI / DALL-E (Text Only)
+                        if (imageUuids.length > 0) {
+                            console.warn("DALL-E does not support image inputs via this interface yet. Proceeding with text only.");
+                        }
+
+                        let url = source.baseUrl.replace(/\/+$/, '');
+                        if (url.endsWith('/chat/completions')) url = url.substring(0, url.lastIndexOf('/chat/completions'));
+                        url += '/images/generations';
+                        
+                        // OpenAI mapping for size
+                        let size = "1024x1024";
+                        
+                        const body = { model: modelName, prompt: promptText.substring(0, 1000), n: 1, size: size, response_format: "b64_json" };
+                        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${source.apiKey}` }, body: JSON.stringify(body), signal });
+                        if (!res.ok) { const errJson = await res.json().catch(() => ({})); throw new Error(`OpenAI API Error ${res.status}: ${errJson.error?.message || res.statusText}`); }
+                        jsonResponse = await res.json();
+                    }
+                    return await parseImageResponse(jsonResponse);
+                };
+
+                // --- v0.41 Step 2: Refactored Data Flow ---
+                const prepareNodeInput = (node) => {
+                    const incomingEdges = edges.value.filter(e => e.to === node.id);
+                    let textParts = [];
+                    let images = [];
+
+                    incomingEdges.forEach(edge => {
+                        const sourceNode = nodes.value.find(n => n.id === edge.from);
+                        const content = getCurrentContent(sourceNode);
+                        if (!content) return;
+
+                        if (sourceNode.type === 'image-input' || (typeof content === 'string' && content.startsWith('db://'))) {
+                            if (!images.includes(content)) images.push(content);
+                        } else {
+                            textParts.push(content);
+                        }
+                    });
+
+                    let combinedText = textParts.join('\n\n');
+                    
+                    if (node.type !== 'input' && node.type !== 'image-input') {
+                        const localPrompt = node.data.value || '';
+                        if (combinedText) {
+                            const mode = node.data.promptMode || 'prepend';
+                            if (mode === 'override') combinedText = localPrompt;
+                            else if (mode === 'append') combinedText = `${combinedText}\n\n${localPrompt}`;
+                            else combinedText = `${localPrompt}\n\n${combinedText}`;
+                        } else {
+                            combinedText = localPrompt;
+                        }
+                    } else if (node.type === 'input') {
+                        combinedText = node.data.value;
+                    }
+
+                    return { text: combinedText, images: images };
+                };
+
+                const getUpstreamImages = (node) => {
+                    const incomingEdges = edges.value.filter(e => e.to === node.id);
+                    let imgs = [];
+                    incomingEdges.forEach(edge => {
+                        const sourceNode = nodes.value.find(n => n.id === edge.from);
+                        const content = getCurrentContent(sourceNode);
+                        if (content && typeof content === 'string' && content.startsWith('db://')) {
+                            if (!imgs.includes(content)) imgs.push(content);
+                        }
+                    });
+                    return imgs;
+                };
+
+                const processNode = async (node, signal) => {
+                    const inputData = prepareNodeInput(node); 
+                    
+                    try {
+                        let result = "";
+                        if (node.type === 'input' || node.type === 'image-input') { 
+                            node.data.status = 'success'; return; 
+                        }
+                        else if (node.type === 'llm') {
+                            if (!node.data.selectedModel) throw new Error("No model selected");
+                            const [sourceId, modelName] = node.data.selectedModel.split('|');
+                            const source = apiSources.value.find(s => s.id == sourceId);
+                            if (!source) throw new Error("API config missing");
+                            if (!inputData.text.trim()) throw new Error("Empty input");
+                            if (signal.aborted) throw new Error("Aborted");
+
+                            const providerType = source.type || 'openai';
+
+                            if (providerType === 'openai') {
+                                let url = source.baseUrl.replace(/\/+$/, '');
+                                if (!url.includes('/chat/completions')) url += '/chat/completions';
+                                const res = await fetch(url, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${source.apiKey}` },
+                                    body: JSON.stringify({ model: modelName, messages: [{ role: 'user', content: inputData.text }] }),
+                                    signal
+                                });
+                                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                                const json = await res.json();
+                                result = json.choices?.[0]?.message?.content || "No content";
+                            } else if (providerType === 'gemini') {
+                                const url = constructGeminiUrl(source.baseUrl, modelName, source.apiKey);
+                                const res = await fetch(url, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ contents: [{ parts: [{ text: inputData.text }] }] }),
+                                    signal
+                                });
+                                if (!res.ok) { const errJson = await res.json().catch(() => ({})); throw new Error(`Gemini Error: ${res.status} ${errJson.error?.message || res.statusText}`); }
+                                const json = await res.json();
+                                if (json.candidates?.[0]?.finishReason === 'SAFETY') throw new Error("Response blocked by Google Safety Filters.");
+                                result = json.candidates?.[0]?.content?.parts?.[0]?.text || "No content returned";
+                            }
+                        }
+                        else if (node.type === 'image') {
+                            if (!node.data.selectedModel) throw new Error("No engine selected");
+                            const [sourceId, modelName] = node.data.selectedModel.split('|');
+                            const source = apiSources.value.find(s => s.id == sourceId);
+                            if (!source) throw new Error("API config missing");
+                            // Allow execution if we have either text or images
+                            if (!inputData.text.trim() && inputData.images.length === 0) throw new Error("Empty input"); 
+                            if (signal.aborted) throw new Error("Aborted");
+                            
+                            result = await handleImageGeneration(node, inputData, source, modelName, signal);
+                        }
+                        else if (node.type === 'output') { 
+                            result = inputData.text; 
+                        }
+
+                        node.data.status = 'success';
+                        node.data.history.push({ content: result, timestamp: Date.now() });
+                        node.data.historyIndex = node.data.history.length - 1;
+                        if (node.type === 'llm') node.data.isOutputLocked = true;
+                    } catch (err) {
+                        node.data.status = 'error';
+                        const errMsg = (err.name === 'AbortError') ? "Aborted." : `Error: ${err.message}`;
+                        node.data.history.push({ content: errMsg, timestamp: Date.now() });
+                        node.data.historyIndex = node.data.history.length - 1;
+                        throw err;
+                    }
+                };
+
+                const runSingleNode = async (node) => {
+                    if (isRunning.value) return;
+                    node.data.status = 'running';
+                    const localController = new AbortController();
+                    try { await processNode(node, localController.signal); } 
+                    catch (e) { console.error("Single Run Failed", e); } 
+                    finally { if (node.data.status === 'running') node.data.status = 'error'; }
+                };
+
+                const executeWorkflow = async () => {
+                    if (nodes.value.length === 0) return;
+                    isRunning.value = true;
+                    executionTime.value = 0;
+                    nodes.value.forEach(n => n.data.status = 'idle');
+                    if (timerInterval) clearInterval(timerInterval);
+                    timerInterval = setInterval(() => executionTime.value++, 1000);
+                    controller = new AbortController();
+                    const signal = controller.signal;
+                    const adjList = {}; const inDegree = {};
+                    nodes.value.forEach(n => { adjList[n.id] = []; inDegree[n.id] = 0; });
+                    edges.value.forEach(e => { if (adjList[e.from]) adjList[e.from].push(e.to); if (inDegree[e.to] !== undefined) inDegree[e.to]++; });
+                    try {
+                        while (isRunning.value) {
+                            if (signal.aborted) break;
+                            const batch = nodes.value.filter(n => inDegree[n.id] === 0 && n.data.status === 'idle');
+                            if (batch.length === 0) {
+                                const anyPending = nodes.value.some(n => n.data.status === 'idle' || n.data.status === 'running');
+                                if (!anyPending) break;
+                                await new Promise(r => setTimeout(r, 100));
+                                continue;
+                            }
+                            batch.forEach(n => n.data.status = 'running');
+                            const promises = batch.map(async (node) => {
+                                if (signal.aborted) return;
+                                try {
+                                    await processNode(node, signal);
+                                    if (adjList[node.id]) adjList[node.id].forEach(neighborId => { if (inDegree[neighborId] > 0) inDegree[neighborId]--; });
+                                } catch (e) { console.error(`Node ${node.id} failed`, e); }
+                            });
+                            await Promise.all(promises);
+                        }
+                    } catch (err) { console.error("Workflow Engine Error", err); } 
+                    finally { isRunning.value = false; clearInterval(timerInterval); }
+                };
+
+                const abortExecution = () => {
+                    if (controller) controller.abort();
+                    isRunning.value = false;
+                    clearInterval(timerInterval);
+                    nodes.value.forEach(n => { if (n.data.status === 'running') { n.data.status = 'error'; n.data.history.push({content: "Stopped.", timestamp: Date.now()}); n.data.historyIndex = n.data.history.length-1; }});
+                };
+
+                // --- Standard Handlers ---
+                const formattedTime = computed(() => `${Math.floor(executionTime.value/60).toString().padStart(2,'0')}:${(executionTime.value%60).toString().padStart(2,'0')}`);
+                
+                const availableModels = computed(() => { 
+                    const l = []; 
+                    apiSources.value.forEach(s => {
+                        let modelsList = [];
+                        if (s.models && s.models.trim()) { modelsList = s.models.split(/[,，]/).map(m => m.trim()).filter(m => m); } 
+                        else if (s.type === 'gemini') { modelsList = ['gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-3-pro-image-preview', 'imagen-3.0-generate-001']; }
+                        modelsList.forEach(m => { l.push({ id: `${s.id}-${m}`, label: `${s.name} - ${m}`, value: `${s.id}|${m}` }); });
+                    }); 
+                    return l; 
+                });
+
+                const transformStyle = computed(() => ({ transform: `translate(${transform.value.x}px, ${transform.value.y}px) scale(${transform.value.k})`, transition: interactionMode.value ? 'none' : 'transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)' }));
+                const backgroundStyle = computed(() => ({ backgroundPosition: `${transform.value.x}px ${transform.value.y}px`, backgroundSize: `${20 * transform.value.k}px ${20 * transform.value.k}px` }));
+                const resetView = () => { transform.value = { x: 0, y: 0, k: 1 }; };
+
+                // Gallery Logic
+                const galleryItems = computed(() => {
+                    const items = [];
+                    nodes.value.forEach(node => {
+                        if (node.data.history && Array.isArray(node.data.history)) {
+                            node.data.history.forEach(h => {
+                                if (h.content && typeof h.content === 'string' && h.content.startsWith('db://')) {
+                                    items.push({ uuid: h.content.replace('db://', ''), nodeId: node.id, timestamp: h.timestamp || 0, src: resolveImageUrl(h.content) });
+                                }
+                            });
+                        }
+                    });
+                    const uniqueItems = []; const seen = new Set();
+                    items.forEach(item => { if(!seen.has(item.uuid)){ seen.add(item.uuid); uniqueItems.push(item); } });
+                    return uniqueItems.sort((a, b) => b.timestamp - a.timestamp);
+                });
+
+                const openGallery = () => { isGalleryOpen.value = true; };
+                const closeGallery = () => { isGalleryOpen.value = false; selectedImageUuids.value = new Set(); };
+                const toggleImageSelection = (uuid) => { if (selectedImageUuids.value.has(uuid)) selectedImageUuids.value.delete(uuid); else selectedImageUuids.value.add(uuid); };
+                const toggleSelectAll = () => { if (selectedImageUuids.value.size === galleryItems.value.length && galleryItems.value.length > 0) selectedImageUuids.value.clear(); else galleryItems.value.forEach(item => selectedImageUuids.value.add(item.uuid)); };
+                const formatDate = (ts) => { if(!ts) return ''; const d = new Date(ts); return d.toLocaleTimeString() + ' ' + d.toLocaleDateString(); };
+
+                const downloadSelected = async () => {
+                    if (selectedImageUuids.value.size === 0 || isDownloading.value) return;
+                    isDownloading.value = true;
+                    try {
+                        const zip = new JSZip(); const folder = zip.folder("workflow_images");
+                        for (const uuid of selectedImageUuids.value) { const blob = await loadBlobFromDB(uuid); if (blob) folder.file(`img_${Date.now()}_${uuid.slice(0,8)}.png`, blob); }
+                        const content = await zip.generateAsync({ type: "blob" });
+                        const a = document.createElement("a"); a.href = URL.createObjectURL(content); a.download = `workflow_gallery_${new Date().toISOString().slice(0,10)}.zip`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href);
+                    } catch (e) { alert("Zip failed: " + e.message); } finally { isDownloading.value = false; }
+                };
+
+                const deleteSelected = async () => {
+                    if (selectedImageUuids.value.size === 0) return;
+                    if (!confirm(`Delete ${selectedImageUuids.value.size} images?`)) return;
+                    const uuidsToDelete = Array.from(selectedImageUuids.value);
+                    for (const uuid of uuidsToDelete) { await idbKeyval.del(uuid); delete imageBlobUrls[uuid]; }
+                    nodes.value.forEach(node => {
+                        if (node.data.history) { node.data.history = node.data.history.filter(h => !h.content.startsWith('db://') || !selectedImageUuids.value.has(h.content.replace('db://', ''))); node.data.historyIndex = node.data.history.length - 1; }
+                    });
+                    selectedImageUuids.value.clear();
+                    saveWorkflowState();
+                };
+
+                const saveWorkflowState = () => {
+                    const data = { version: "0.41", timestamp: Date.now(), nodes: nodes.value, edges: edges.value, transform: transform.value };
+                    localStorage.setItem('ai_workflow_autosave', JSON.stringify(data));
+                    isSaving.value = true;
+                    setTimeout(() => isSaving.value = false, 1000);
+                };
+
+                const getNodeIcon = (type) => ({ input: 'fa-solid fa-font', 'image-input': 'fa-solid fa-upload', llm: 'fa-solid fa-wand-magic-sparkles', image: 'fa-solid fa-image', output: 'fa-solid fa-eye' }[type] || 'fa-solid fa-box');
+                const getCurrentContent = (node) => {
+                    if (node.type === 'input') return node.data.value;
+                    if (node.type === 'image-input') return node.data.value;
+                    if (!node.data.history || node.data.history.length === 0) return node.data.output || '';
+                    const idx = node.data.historyIndex;
+                    if (idx >= 0 && idx < node.data.history.length) return node.data.history[idx].content;
+                    return '';
+                };
+                
+                const prevHistory = (node) => { if (node.data.historyIndex > 0) node.data.historyIndex--; };
+                const nextHistory = (node) => { if (node.data.historyIndex < node.data.history.length - 1) node.data.historyIndex++; };
+                const canPrev = (node) => node.data.history && node.data.historyIndex > 0;
+                const canNext = (node) => node.data.history && node.data.historyIndex < node.data.history.length - 1;
+                const isNodeRunning = (nodeId) => { const n = nodes.value.find(n => n.id === nodeId); return n && n.data.status === 'running'; };
+
+                // --- Interaction Handlers ---
+                const handleWheel = (e) => { const d = e.deltaY>0?-0.1:0.1; transform.value.k = Math.min(Math.max(0.1, transform.value.k+d),3); const r=e.currentTarget.getBoundingClientRect(); const mx=e.clientX-r.left,my=e.clientY-r.top; const wx=(mx-transform.value.x)/transform.value.k,wy=(my-transform.value.y)/transform.value.k; transform.value.x=mx-wx*transform.value.k; transform.value.y=my-wy*transform.value.k; };
+                
+                const handleMouseDown = (e) => { 
+                    if(e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'SELECT') {
+                        if (e.shiftKey && e.button === 0) {
+                            e.preventDefault(); interactionMode.value = 'select';
+                            const r = mainCanvas.value.getBoundingClientRect();
+                            const wx = (e.clientX - r.left - transform.value.x) / transform.value.k;
+                            const wy = (e.clientY - r.top - transform.value.y) / transform.value.k;
+                            selectionBox.startX = wx; selectionBox.startY = wy; selectionBox.x = wx; selectionBox.y = wy; selectionBox.width = 0; selectionBox.height = 0; selectionBox.active = true;
+                            return;
+                        }
+                        if (e.button === 0 || e.button === 1) {
+                            if (!e.shiftKey) { selectedNodeIds.value.clear(); }
+                            e.preventDefault(); interactionMode.value = 'pan'; lastMousePos.value = { x: e.clientX, y: e.clientY };
+                        }
+                    }
+                };
+
+                const selectNode = (e, id) => {
+                    if (e.shiftKey) {
+                        if (selectedNodeIds.value.has(id)) { const newSet = new Set(selectedNodeIds.value); newSet.delete(id); selectedNodeIds.value = newSet; } 
+                        else { const newSet = new Set(selectedNodeIds.value); newSet.add(id); selectedNodeIds.value = newSet; }
+                    } else {
+                        if (!selectedNodeIds.value.has(id) || selectedNodeIds.value.size > 1) { selectedNodeIds.value = new Set([id]); }
+                    }
+                };
+                
+                const startNodeDrag = (e, n) => { 
+                    if(e.button===0){
+                        interactionMode.value='node'; draggingNode.value=n; lastMousePos.value={x:e.clientX,y:e.clientY};
+                        if (e.shiftKey) { if (!selectedNodeIds.value.has(n.id)) { const newSet = new Set(selectedNodeIds.value); newSet.add(n.id); selectedNodeIds.value = newSet; } } 
+                        else { if (!selectedNodeIds.value.has(n.id)) { selectedNodeIds.value = new Set([n.id]); } }
+                    } 
+                };
+
+                const handleMouseMove = (e) => { 
+                    if(!interactionMode.value)return; 
+                    const r=mainCanvas.value.getBoundingClientRect(); 
+                    if (interactionMode.value === 'select') {
+                        const wx = (e.clientX - r.left - transform.value.x) / transform.value.k; const wy = (e.clientY - r.top - transform.value.y) / transform.value.k;
+                        selectionBox.x = Math.min(wx, selectionBox.startX); selectionBox.y = Math.min(wy, selectionBox.startY); selectionBox.width = Math.abs(wx - selectionBox.startX); selectionBox.height = Math.abs(wy - selectionBox.startY);
+                    } else if(interactionMode.value==='pan'){ 
+                        transform.value.x+=e.clientX-lastMousePos.value.x;transform.value.y+=e.clientY-lastMousePos.value.y;lastMousePos.value={x:e.clientX,y:e.clientY}; 
+                    } else if(interactionMode.value==='node'){ 
+                        const dx = (e.clientX - lastMousePos.value.x) / transform.value.k; const dy = (e.clientY - lastMousePos.value.y) / transform.value.k;
+                        if (selectedNodeIds.value.size > 0) { selectedNodeIds.value.forEach(id => { const node = nodes.value.find(n => n.id === id); if (node) { node.x += dx; node.y += dy; } }); } 
+                        else if (draggingNode.value) { draggingNode.value.x += dx; draggingNode.value.y += dy; }
+                        lastMousePos.value={x:e.clientX,y:e.clientY}; 
+                    } else if(interactionMode.value==='wire'&&tempEdge.value){ 
+                        const mx=e.clientX-r.left,my=e.clientY-r.top; const wx=(mx-transform.value.x)/transform.value.k,wy=(my-transform.value.y)/transform.value.k; tempEdge.value.endX=wx;tempEdge.value.endY=wy; 
+                    } 
+                };
+                
+                const handleMouseUp = () => { 
+                    if (interactionMode.value === 'select') {
+                        const boxRect = { left: selectionBox.x, right: selectionBox.x + selectionBox.width, top: selectionBox.y, bottom: selectionBox.y + selectionBox.height };
+                        const newSelection = new Set(selectedNodeIds.value);
+                        nodes.value.forEach(node => {
+                            const el = document.getElementById('node-' + node.id); const nodeH = el ? el.offsetHeight : 300; const nodeW = 288; 
+                            const nodeLeft = node.x; const nodeRight = node.x + nodeW; const nodeTop = node.y; const nodeBottom = node.y + nodeH;
+                            if (!(boxRect.left > nodeRight || boxRect.right < nodeLeft || boxRect.top > nodeBottom || boxRect.bottom < nodeTop)) { newSelection.add(node.id); }
+                        });
+                        selectedNodeIds.value = newSelection; selectionBox.active = false;
+                    }
+                    if(interactionMode.value==='wire')tempEdge.value=null; interactionMode.value=null; draggingNode.value=null; 
+                };
+
+                const addNode = (t) => { 
+                    const r=mainCanvas.value.getBoundingClientRect(); 
+                    // v0.41 Final: Add default aspectRatio and resolution to image node
+                    const newNode = { 
+                        id:Date.now().toString(), type:t, label: t.charAt(0).toUpperCase()+t.slice(1)+' Node', 
+                        x:((r.width/2)-transform.value.x)/transform.value.k-144, y:((r.height/2)-transform.value.y)/transform.value.k-100, 
+                        data:{ 
+                            value:'', promptMode: 'prepend', selectedModel:availableModels.value.length?availableModels.value[0].value:'', 
+                            status:'idle', history: [], historyIndex: -1, isOutputLocked: t === 'llm' ? true : undefined
+                        } 
+                    };
+                    
+                    if (t === 'image') {
+                        newNode.data.aspectRatio = '1:1';
+                        newNode.data.resolution = '1024x1024';
+                    }
+
+                    nodes.value.push(newNode); 
+                };
+                
+                const deleteSelectedNodes = () => { if (selectedNodeIds.value.size > 0) { nodes.value = nodes.value.filter(n => !selectedNodeIds.value.has(n.id)); edges.value = edges.value.filter(e => !selectedNodeIds.value.has(e.from) && !selectedNodeIds.value.has(e.to)); selectedNodeIds.value.clear(); } };
+                const deleteNode = (id) => { if (selectedNodeIds.value.has(id)) { deleteSelectedNodes(); } else { nodes.value=nodes.value.filter(n=>n.id!==id); edges.value=edges.value.filter(e=>e.from!==id&&e.to!==id); } };
+                
+                const getPortPos = (node, isInput) => ({ x: isInput ? node.x : node.x + 288, y: node.y + 94 });
+                const startWiring = (e,n) => { interactionMode.value='wire';const s=getPortPos(n,false);tempEdge.value={fromId:n.id,startX:s.x,startY:s.y,endX:s.x,endY:s.y}; };
+                const finishEdge = (tn) => { if(interactionMode.value!=='wire'||!tempEdge.value||tempEdge.value.fromId===tn.id)return; if(!edges.value.some(e=>e.from===tempEdge.value.fromId&&e.to===tn.id)) edges.value.push({id:Date.now().toString(),from:tempEdge.value.fromId,to:tn.id}); interactionMode.value=null;tempEdge.value=null; };
+                const deleteEdge = (id) => edges.value=edges.value.filter(e=>e.id!==id);
+                
+                const getEdgePath = (e) => { 
+                    const f=nodes.value.find(n=>n.id===e.from),t=nodes.value.find(n=>n.id===e.to); 
+                    if(!f||!t)return''; 
+                    const fp=getPortPos(f,false),tp=getPortPos(t,true); 
+                    const dist = Math.abs(fp.x - tp.x) * 0.5;
+                    return `M ${fp.x} ${fp.y} C ${fp.x + dist} ${fp.y}, ${tp.x - dist} ${tp.y}, ${tp.x} ${tp.y}`; 
+                };
+                const getTempEdgePath = () => {
+                    if (!tempEdge.value) return '';
+                    const dist = Math.abs(tempEdge.value.startX - tempEdge.value.endX) * 0.5;
+                    return `M ${tempEdge.value.startX} ${tempEdge.value.startY} C ${tempEdge.value.startX + dist} ${tempEdge.value.startY}, ${tempEdge.value.endX - dist} ${tempEdge.value.endY}, ${tempEdge.value.endX} ${tempEdge.value.endY}`;
+                };
+                
+                // Minimap Geometry
+                const minimapGeometry = computed(() => {
+                    if (nodes.value.length === 0) return null;
+                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                    nodes.value.forEach(n => {
+                        minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+                        maxX = Math.max(maxX, n.x + 300); maxY = Math.max(maxY, n.y + 300);
+                    });
+                    
+                    const padding = 500;
+                    minX -= padding; maxX += padding; minY -= padding; maxY += padding;
+                    const w = maxX - minX; const h = maxY - minY;
+                    const mapW = 240; const mapH = 160;
+                    const scale = Math.min(mapW / w, mapH / h);
+                    
+                    const cw = mainCanvas.value ? mainCanvas.value.clientWidth : 1000;
+                    const ch = mainCanvas.value ? mainCanvas.value.clientHeight : 800;
+                    const vx = (-transform.value.x) / transform.value.k;
+                    const vy = (-transform.value.y) / transform.value.k;
+                    const vw = cw / transform.value.k;
+                    const vh = ch / transform.value.k;
+
+                    return {
+                        mapW, mapH, minX, minY, scale,
+                        viewport: { left: (vx - minX) * scale, top: (vy - minY) * scale, width: vw * scale, height: vh * scale },
+                        miniNodes: nodes.value.map(n => ({ id: n.id, left: (n.x - minX) * scale, top: (n.y - minY) * scale, width: 288 * scale, height: 150 * scale }))
+                    };
+                });
+
+                const handleMinimapClick = (e) => {
+                    if (!minimapGeometry.value || !mainCanvas.value) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const clickX = e.clientX - rect.left; const clickY = e.clientY - rect.top;
+                    const worldX = (clickX / minimapGeometry.value.scale) + minimapGeometry.value.minX;
+                    const worldY = (clickY / minimapGeometry.value.scale) + minimapGeometry.value.minY;
+                    const cw = mainCanvas.value.clientWidth; const ch = mainCanvas.value.clientHeight;
+                    transform.value.x = (cw / 2) - (worldX * transform.value.k);
+                    transform.value.y = (ch / 2) - (worldY * transform.value.k);
+                };
+
+                onMounted(()=>{
+                    const s=localStorage.getItem('ai_workflow_api_sources');
+                    if(s) { const parsed = JSON.parse(s); parsed.forEach(src => { if (!src.type) src.type = 'openai'; }); apiSources.value = parsed; }
+
+                    const autosave = localStorage.getItem('ai_workflow_autosave');
+                    if(autosave) {
+                        try {
+                            const data = JSON.parse(autosave); nodes.value = data.nodes || []; edges.value = data.edges || []; if(data.transform) transform.value = data.transform;
+                            nodes.value.forEach(n => {
+                                if (n.type === 'llm' && typeof n.data.isOutputLocked === 'undefined') n.data.isOutputLocked = true;
+                                if(n.data.history && Array.isArray(n.data.history)) { n.data.history.forEach(h => { if(h.content && h.content.startsWith('db://')) resolveImageUrl(h.content); }); }
+                            });
+                        } catch (e) { console.error("Failed to load autosave", e); }
+                    }
+
+                    setInterval(saveWorkflowState, 5000);
+
+                    window.addEventListener('keydown',(e)=>{
+                        if(e.code==='Space'&&e.target===document.body)e.preventDefault();
+                        const isInputActive = document.activeElement.tagName==='INPUT' || document.activeElement.tagName==='TEXTAREA';
+                        if((e.key==='Delete'||e.key==='Backspace') && !isInputActive) { deleteSelectedNodes(); }
+                        if((e.ctrlKey || e.metaKey) && e.key === 'c' && !isInputActive) { if(selectedNodeIds.value.size > 0) { const nodesToCopy = nodes.value.filter(n => selectedNodeIds.value.has(n.id)); clipboardData.value = JSON.stringify(nodesToCopy); } }
+                        if((e.ctrlKey || e.metaKey) && e.key === 'v' && !isInputActive) {
+                            if(clipboardData.value) {
+                                try {
+                                    const parsedNodes = JSON.parse(clipboardData.value);
+                                    if(Array.isArray(parsedNodes)) {
+                                        selectedNodeIds.value.clear(); 
+                                        parsedNodes.forEach(node => {
+                                            const newId = Date.now().toString() + Math.floor(Math.random() * 10000);
+                                            node.id = newId; node.x += 50; node.y += 50; if(node.data) node.data.status = 'idle';
+                                            nodes.value.push(node); selectedNodeIds.value.add(newId);
+                                        });
+                                    }
+                                } catch(err) { console.error("Paste error", err); }
+                            }
+                        }
+                    });
+                });
+                
+                const openSettings = () => { isSettingsOpen.value = true; if(apiSources.value.length && !currentForm.value.id) selectSource(apiSources.value[0]); };
+                const closeSettings = () => isSettingsOpen.value = false;
+                const selectSource = (s) => currentForm.value = {...s};
+                const createNewSource = () => currentForm.value = { id: Date.now(), type: 'openai', name: 'New Provider', baseUrl: '', apiKey: '', models: '' };
+                const saveCurrentSource = () => { if(!currentForm.value.id) return; const idx = apiSources.value.findIndex(s=>s.id===currentForm.value.id); if(idx!==-1) apiSources.value[idx] = {...currentForm.value}; else apiSources.value.push({...currentForm.value}); localStorage.setItem('ai_workflow_api_sources', JSON.stringify(apiSources.value)); };
+                const deleteCurrentSource = () => { if(!currentForm.value.id) return; apiSources.value = apiSources.value.filter(s=>s.id!==currentForm.value.id); currentForm.value = {id:null}; localStorage.setItem('ai_workflow_api_sources', JSON.stringify(apiSources.value)); };
+                const handleTypeChange = () => { if (currentForm.value.type === 'gemini') { if (!currentForm.value.baseUrl || currentForm.value.baseUrl.includes('api.openai.com')) currentForm.value.baseUrl = 'https://generativelanguage.googleapis.com/v1beta'; } else if (currentForm.value.type === 'openai') { if (currentForm.value.baseUrl === 'https://generativelanguage.googleapis.com/v1beta') currentForm.value.baseUrl = ''; } };
+
+                const exportWorkflow = () => { const b=new Blob([JSON.stringify({version:"0.41",nodes:nodes.value,edges:edges.value},null,2)],{type:"application/json"}); const u=URL.createObjectURL(b); const a=document.createElement("a"); a.href=u; a.download=`workflow_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(u); };
+                const triggerImport = () => fileInput.value.click();
+                const handleImport = (e) => { 
+                    const f=e.target.files[0]; if(!f)return; const r=new FileReader(); 
+                    r.onload=(ev)=>{ try{ const j=JSON.parse(ev.target.result); if(j.nodes&&j.edges){ nodes.value=j.nodes; edges.value=j.edges; selectedNodeIds.value=new Set(); nodes.value.forEach(n=>{ n.data.status='idle'; if (n.type === 'llm' && typeof n.data.isOutputLocked === 'undefined') n.data.isOutputLocked = true; if(!n.data.history) n.data.history = []; if(typeof n.data.historyIndex === 'undefined') n.data.historyIndex = -1; if(n.data.output && n.data.history.length === 0) { n.data.history.push({content: n.data.output, timestamp: Date.now()}); n.data.historyIndex = 0; } n.data.history.forEach(h => { if(h.content && h.content.startsWith('db://')) resolveImageUrl(h.content); }); }); saveWorkflowState(); }else{alert("Invalid file");} }catch{alert("Parse error");} }; r.readAsText(f); e.target.value=''; 
+                };
+                const openLightbox = (url) => { if(url && !url.startsWith('Error')) lightboxUrl.value = url; };
+                const isImageUrl = (url) => { if (!url || typeof url !== 'string') return false; return url.match(/\.(jpeg|jpg|gif|png|webp)$/) != null || url.startsWith('http') || url.startsWith('db://'); };
+
+                return {
+                    transform, transformStyle, backgroundStyle, nodes, edges, apiSources, availableModels, tempEdge, selectedNodeIds, selectionBox, isRunning, isSaving, executionTime, formattedTime, mainCanvas, minimapGeometry,
+                    handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, addNode, deleteNode, selectNode, startNodeDrag, startWiring, finishEdge, deleteEdge, getEdgePath, getTempEdgePath,
+                    getNodeIcon, isNodeRunning, getPortPos, openLightbox, lightboxUrl, isImageUrl, resolveImageUrl,
+                    isSettingsOpen, openSettings, closeSettings, currentForm, createNewSource, selectSource, saveCurrentSource, deleteCurrentSource,
+                    exportWorkflow, triggerImport, handleImport, fileInput,
+                    executeWorkflow, abortExecution, getCurrentContent, prevHistory, nextHistory, canPrev, canNext, runSingleNode,
+                    isGalleryOpen, openGallery, closeGallery, galleryItems, selectedImageUuids, toggleImageSelection, toggleSelectAll, formatDate,
+                    downloadSelected, deleteSelected, isDownloading, handleTypeChange, resetView, handleMinimapClick,
+                    currentLang, t, toggleLang,
+                    handleImageUpload, clearImageInput,
+                    getUpstreamImages
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
+```
